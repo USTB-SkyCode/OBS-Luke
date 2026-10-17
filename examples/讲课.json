@@ -16,6 +16,11 @@
     "transition_duration": 500,
     "transitions": [
         {
+            "name": "色彩淡入淡出",
+            "id": "fade_to_color_transition",
+            "settings": {}
+        },
+        {
             "name": "亮度擦除",
             "id": "wipe_transition",
             "settings": {
@@ -31,11 +36,6 @@
                 "direction": "left",
                 "swipe_in": true
             }
-        },
-        {
-            "name": "色彩淡入淡出",
-            "id": "fade_to_color_transition",
-            "settings": {}
         }
     ],
     "quick_transitions": [
@@ -61,10 +61,17 @@
             "fade_to_black": true
         }
     ],
-    "saved_projectors": [],
+    "saved_projectors": [
+        {
+            "monitor": 1,
+            "type": 2,
+            "geometry": "AdnQywADAAAAAAeHAAAAAAAADXgAAANYAAAHgAAAAAAAAA1/AAADXwAAAAEABAAABgAAAAeAAAAAAAAADX8AAANf",
+            "alwaysOnTopOverridden": false
+        }
+    ],
     "preview_locked": false,
     "scaling_enabled": false,
-    "scaling_level": -20,
+    "scaling_level": -11,
     "scaling_off_x": 0.0,
     "scaling_off_y": 0.0,
     "virtual-camera": {
@@ -193,7 +200,7 @@
                             "x": 3.555555582046509,
                             "y": 2.0
                         },
-                        "scale_filter": "bilinear",
+                        "scale_filter": "area",
                         "blend_method": "default",
                         "blend_type": "normal",
                         "show_transition": {
@@ -349,8 +356,8 @@
             "id": "monitor_capture",
             "versioned_id": "monitor_capture",
             "settings": {
-                "monitor_id": "DUMMY",
-                "force_sdr": false
+                "force_sdr": false,
+                "monitor_id": "DUMMY"
             },
             "mixers": 0,
             "sync": 0,
@@ -376,7 +383,7 @@
                     "id": "gpu_delay",
                     "versioned_id": "gpu_delay",
                     "settings": {
-                        "delay_ms": 50
+                        "delay_ms": 100
                     },
                     "mixers": 0,
                     "sync": 0,
@@ -426,6 +433,34 @@
             "monitoring_type": 0,
             "private_settings": {},
             "filters": [
+                {
+                    "prev_ver": 537001986,
+                    "name": "压缩器（回避）",
+                    "uuid": "52b8294a-5bd5-4172-9eaa-0ab94ba63761",
+                    "id": "compressor_filter",
+                    "versioned_id": "compressor_filter",
+                    "settings": {
+                        "sidechain_source": "麦克风",
+                        "ratio": 8.0,
+                        "threshold": -18.0
+                    },
+                    "mixers": 255,
+                    "sync": 0,
+                    "flags": 0,
+                    "volume": 1.0,
+                    "balance": 0.5,
+                    "enabled": true,
+                    "muted": false,
+                    "push-to-mute": false,
+                    "push-to-mute-delay": 0,
+                    "push-to-talk": false,
+                    "push-to-talk-delay": 0,
+                    "hotkeys": {},
+                    "deinterlace_mode": 0,
+                    "deinterlace_field_order": 0,
+                    "monitoring_type": 0,
+                    "private_settings": {}
+                },
                 {
                     "prev_ver": 537001986,
                     "name": "限幅",
@@ -563,7 +598,7 @@
                             "x": 3.1388888359069824,
                             "y": 2.0
                         },
-                        "scale_filter": "bilinear",
+                        "scale_filter": "lanczos",
                         "blend_method": "default",
                         "blend_type": "normal",
                         "show_transition": {
@@ -618,7 +653,7 @@
                             "x": 0.4166666567325592,
                             "y": 0.32407405972480774
                         },
-                        "scale_filter": "bilinear",
+                        "scale_filter": "area",
                         "blend_method": "default",
                         "blend_type": "normal",
                         "show_transition": {
@@ -754,6 +789,8 @@
             "push-to-talk-delay": 0,
             "hotkeys": {
                 "OBSBasic.SelectScene": [],
+                "libobs.show_scene_item.5": [],
+                "libobs.hide_scene_item.5": [],
                 "libobs.show_scene_item.1": [],
                 "libobs.hide_scene_item.1": [],
                 "libobs.show_scene_item.3": [],
@@ -761,9 +798,7 @@
                 "libobs.show_scene_item.4": [],
                 "libobs.hide_scene_item.4": [],
                 "libobs.show_scene_item.2": [],
-                "libobs.hide_scene_item.2": [],
-                "libobs.show_scene_item.5": [],
-                "libobs.hide_scene_item.5": []
+                "libobs.hide_scene_item.2": []
             },
             "deinterlace_mode": 0,
             "deinterlace_field_order": 0,
@@ -778,8 +813,6 @@
             "id": "dshow_input",
             "versioned_id": "dshow_input",
             "settings": {
-                "video_device_id": "",
-                "last_video_device_id": "",
                 "last_resolution": "1280x720",
                 "resolution": "1280x720",
                 "flip_vertically": false,
@@ -788,7 +821,9 @@
                 "video_format": 0,
                 "active": true,
                 "autorotation": true,
-                "hw_decode": true
+                "hw_decode": true,
+                "video_device_id": "",
+                "last_video_device_id": ""
             },
             "mixers": 255,
             "sync": 0,
@@ -903,7 +938,7 @@
                     "settings": {
                         "ratio": 8.0,
                         "threshold": -6.0,
-                        "sidechain_source": "本机音频"
+                        "sidechain_source": "none"
                     },
                     "mixers": 255,
                     "sync": 0,

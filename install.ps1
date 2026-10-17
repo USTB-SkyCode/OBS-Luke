@@ -7,13 +7,16 @@
     What this script does, in order:
 
       1. Detect the installed OBS Studio and confirm it with the user.
-      2. Reuse the scene/profile files shipped next to this script, or download
-         the repository from GitHub into a temporary directory and extract it.
+      2. Take the scene/profile package from the directory next to this script,
+         or download the repository into a temporary directory. A local package
+         is staged into a temporary directory as well, so that both sources then
+         behave identically.
       3. Ask before replacing a scene collection or profile of the same name;
          anything that is replaced is backed up first.
-      4. Install the scene collection and the profile, then activate them.
-      5. Install the Lua script (and the background image asset).
-      6. Rewrite every machine-dependent value it can determine (file paths and
+      4. Install the Lua script and the background image asset.
+      5. Install the scene collection and the profile.
+      6. Activate the profile and the scene collection.
+      7. Rewrite every machine-dependent value it can determine (file paths and
          recording folders) and report the values that need to be configured
          by hand (camera device, capture monitor, stream key, ...).
 
@@ -75,13 +78,80 @@ $Utf8Bom = New-Object System.Text.UTF8Encoding($true)
 $manual = [System.Collections.Generic.List[string]]::new()
 $tempDirs = [System.Collections.Generic.List[string]]::new()
 
-# Every exit path removes the temporary download directory.
+# Every exit path removes the temporary download/staging directory.
 function Exit-Script([int] $code = 0) {
     foreach ($temp in $tempDirs) {
         if ($KeepTemp) { Write-Note "临时目录保留：$temp" }
         else { Remove-Item $temp -Recurse -Force -ErrorAction SilentlyContinue }
     }
     exit $code
+}
+
+# True when both paths point at the same file. Copy-Item refuses to copy a file
+# onto itself ("cannot overwrite item with itself"), which is exactly what
+# happens on a machine where the package lives in the install directory.
+function Test-SamePath([string] $a, [string] $b) {
+    if (-not $a -or -not $b) { return $false }
+    try {
+        $fullA = [System.IO.Path]::GetFullPath($a).TrimEnd('\')
+        $fullB = [System.IO.Path]::GetFullPath($b).TrimEnd('\')
+    } catch {
+        return $false
+    }
+    return ($fullA -ieq $fullB)
+}
+
+# Copies one file into place, skipping the copy when source and destination are
+# the same file, and reporting failures instead of aborting with a raw error.
+function Install-File {
+    param([string] $Source, [string] $Target, [string] $Label)
+    if (Test-SamePath $Source $Target) {
+        Write-Ok "$Label 已在目标位置（源与目标相同，跳过复制）"
+        return $true
+    }
+    try {
+        $dir = Split-Path $Target -Parent
+        if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        Copy-Item $Source $Target -Force
+        Write-Ok "$Label 已安装：$Target"
+        return $true
+    } catch {
+        Write-Fail "$Label 安装失败：$($_.Exception.Message)"
+        Write-Note "  源：$Source"
+        Write-Note "  目标：$Target"
+        return $false
+    }
+}
+
+# Copies a locally found package into a temporary directory in the repository
+# layout, so that the local path and the downloaded path are then identical.
+# Only the files this installer consumes are staged (see the package contract
+# in docs/porting.md), never .git or the rest of the repository.
+function Copy-PackageToStage {
+    param([pscustomobject] $Package, [string] $Name)
+    $stage = Join-Path ([System.IO.Path]::GetTempPath()) ("obs-luke-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+    $stageRoot = Join-Path $stage 'OBS-Luke-package'
+    $stageExamples = Join-Path $stageRoot 'examples'
+    $stageProfile = Join-Path $stageExamples $Name
+    try {
+        New-Item -ItemType Directory -Path $stageProfile -Force | Out-Null
+        Copy-Item $Package.Scene (Join-Path $stageExamples "$Name.json") -Force
+        if (Get-ChildItem $Package.Profile -File -ErrorAction SilentlyContinue) {
+            Copy-Item (Join-Path $Package.Profile '*') $stageProfile -Force
+        }
+        if ($Package.Asset) {
+            Copy-Item $Package.Asset (Join-Path $stageExamples (Split-Path $Package.Asset -Leaf)) -Force
+        }
+        if ($Package.Lua -and (Test-Path $Package.Lua)) {
+            Copy-Item $Package.Lua (Join-Path $stageRoot 'activity-scene-switch.lua') -Force
+        }
+    } catch {
+        Write-Fail "暂存包内容失败：$($_.Exception.Message)"
+        Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
+        return $null
+    }
+    $tempDirs.Add($stage)
+    return (Find-Package $stageRoot)
 }
 
 # ---------------------------------------------------------------------------
@@ -399,9 +469,14 @@ foreach ($candidateDir in $searchDirs) {
     if ($package) { break }
 }
 
+$packageSource = ''
+$packageSourceRoot = ''
 if ($package) {
+    $packageSource = 'local'
+    $packageSourceRoot = $package.Root
     Write-Ok "使用脚本旁边的场景与配置：$($package.Root)"
 } else {
+    $packageSource = 'download'
     Write-Note '脚本旁边没有场景与配置，从 GitHub 下载本仓库……'
     Write-Note "  $RepoZipUrl"
     $temp = Join-Path ([System.IO.Path]::GetTempPath()) ("obs-luke-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
@@ -424,11 +499,25 @@ if ($package) {
         Exit-Script 1
     }
     Write-Ok "已下载并解压到：$($extracted.FullName)"
+    $packageSourceRoot = $extracted.FullName
 }
 
+# Package summary, printed for the original source so it can be compared with
+# the repository. Package contract: activity-scene-switch.lua plus
+# examples\<Name>.json, examples\<Name>\* and examples\background.png.
 if (-not (Test-Path $package.Lua)) { Write-Warn2 '包里没有 activity-scene-switch.lua，脚本不会被安装。' }
 else { Write-Ok "包内容：$($package.Scene) / $($package.Profile) / $($package.Lua)" }
 if (-not $package.Asset) { Write-Warn2 '包里没有 background.png，直播背景图源会缺文件。' }
+
+# A locally found package is staged into a temporary directory first, so the
+# "package next to the script" and the "downloaded and extracted" paths are
+# then identical. This also keeps the source out of the install directory.
+if ($packageSource -eq 'local') {
+    $staged = Copy-PackageToStage -Package $package -Name $Name
+    if (-not $staged) { Exit-Script 1 }
+    $package = $staged
+    Write-Ok "已暂存到临时目录：$($package.Root)"
+}
 
 # ---------------------------------------------------------------------------
 # Step 3/4: install scene collection and profile
@@ -449,15 +538,8 @@ if ($sceneExists -or $profileExists) {
     Write-Ok '没有同名场景集合与配置档案，将新建。'
 }
 
-Write-Section '4. 写入场景与配置'
+Write-Section '4. 安装脚本与素材'
 
-$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$backupDir = Join-Path $configRoot "obs-luke-backup-$stamp"
-$workDir = if ($DryRun) { Join-Path $env:TEMP "obs-luke-dryrun-$stamp" } else { $null }
-$writtenScenePath = if ($DryRun) { Join-Path $workDir "scenes\$Name.json" } else { $script:TargetScene }
-$writtenProfileDir = if ($DryRun) { Join-Path $workDir "profiles\$Name" } else { $script:TargetProfile }
-
-# ---- install location for the Lua script and the image asset ----
 $scriptDirPreferred = Join-Path $OBSRoot 'data\obs-plugins\frontend-tools\scripts\OBS-Luke'
 $scriptDirFallback = Join-Path $configRoot 'OBS-Luke'
 $scriptDir = $scriptDirPreferred
@@ -468,8 +550,39 @@ if (-not (Test-CanWrite $scriptDirPreferred)) {
 } else {
     Write-Ok "脚本与素材目录：$scriptDir"
 }
+if (Test-SamePath $scriptDir $packageSourceRoot) {
+    Write-Note '（安装目标目录与包来源目录是同一个，脚本与素材将就地写入该目录。）'
+}
 
 $assetsDir = $scriptDir
+
+# The script and the asset are installed before the OBS configuration is
+# touched, so that a failure here cannot leave a half-applied state behind.
+if (Test-Path $package.Lua) {
+    $targetLua = Join-Path $scriptDir 'activity-scene-switch.lua'
+    if ($DryRun) {
+        Write-Note "（演练）会安装脚本到：$targetLua"
+    } elseif (-not (Install-File -Source $package.Lua -Target $targetLua -Label '脚本')) {
+        Exit-Script 1
+    }
+}
+if ($package.Asset) {
+    $targetAsset = Join-Path $assetsDir (Split-Path $package.Asset -Leaf)
+    if ($DryRun) {
+        Write-Note "（演练）会安装背景素材到：$targetAsset"
+    } elseif (-not (Install-File -Source $package.Asset -Target $targetAsset -Label '背景素材')) {
+        Exit-Script 1
+    }
+}
+
+Write-Section '5. 写入场景与配置'
+
+$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+$backupDir = Join-Path $configRoot "obs-luke-backup-$stamp"
+$workDir = if ($DryRun) { Join-Path $env:TEMP "obs-luke-dryrun-$stamp" } else { $null }
+$writtenScenePath = if ($DryRun) { Join-Path $workDir "scenes\$Name.json" } else { $script:TargetScene }
+$writtenProfileDir = if ($DryRun) { Join-Path $workDir "profiles\$Name" } else { $script:TargetProfile }
+
 $videosDir = [Environment]::GetFolderPath('MyVideos')
 if (-not $videosDir) { $videosDir = Join-Path $env:USERPROFILE 'Videos' }
 
@@ -557,40 +670,18 @@ foreach ($file in (Get-ChildItem $package.Profile -File)) {
             Write-Warn2 'basic.ini 里仍有未替换的录制路径占位符。'
         }
         Write-Utf8Text $target $text $ini.HasBom
-    } else {
-        Copy-Item $file.FullName $target -Force
+    } elseif (-not (Install-File -Source $file.FullName -Target $target -Label "配置档案 $($file.Name)")) {
+        Exit-Script 1
     }
 }
 foreach ($entry in $changeLog) { Write-Note "- $entry" }
 Write-Ok "场景集合：$writtenScenePath"
 Write-Ok "配置档案：$writtenProfileDir（$((Get-ChildItem $package.Profile -File).Count) 个文件）"
 
-# ---- Lua script and image asset ----
-if (Test-Path $package.Lua) {
-    $targetLua = Join-Path $scriptDir 'activity-scene-switch.lua'
-    if ($DryRun) {
-        Write-Note "（演练）会安装脚本到：$targetLua"
-    } else {
-        New-Item -ItemType Directory -Path $scriptDir -Force | Out-Null
-        Copy-Item $package.Lua $targetLua -Force
-        Write-Ok "脚本已安装：$targetLua"
-    }
-}
-if ($package.Asset) {
-    $targetAsset = Join-Path $assetsDir (Split-Path $package.Asset -Leaf)
-    if ($DryRun) {
-        Write-Note "（演练）会安装背景素材到：$targetAsset"
-    } else {
-        New-Item -ItemType Directory -Path $assetsDir -Force | Out-Null
-        Copy-Item $package.Asset $targetAsset -Force
-        Write-Ok "背景素材已安装：$targetAsset"
-    }
-}
-
 # ---------------------------------------------------------------------------
-# Step 5: activate the profile and the scene collection
+# Step 6: activate the profile and the scene collection
 
-Write-Section '5. 激活配置档案与场景集合'
+Write-Section '6. 激活配置档案与场景集合'
 
 $userIniFile = Read-Utf8Text $userIni
 $basic = [ordered]@{
@@ -609,9 +700,9 @@ if ($DryRun) {
 }
 
 # ---------------------------------------------------------------------------
-# Step 6: checks on values that cannot be detected
+# Step 7: checks on values that cannot be detected
 
-Write-Section '6. 可以自动确定的变量与需要手动配置的项'
+Write-Section '7. 可以自动确定的变量与需要手动配置的项'
 
 if ($changeLog.Count -gt 0) {
     Write-Ok '已自动改写的变量：'
